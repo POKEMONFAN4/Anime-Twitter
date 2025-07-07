@@ -84,6 +84,12 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
 
     setIsUpdating(true);
     try {
+      // Set user context for RLS
+      await supabase.rpc('set_config', { 
+        setting_name: 'app.current_user_id', 
+        setting_value: user.id 
+      });
+
       let avatarUrl = user.profile?.avatar_url;
 
       if (avatarFile) {
@@ -102,7 +108,10 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
         })
         .eq('user_id', user.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Profile update error:', error);
+        throw error;
+      }
 
       toast({ title: "Success", description: "Profile updated successfully!" });
       setShowProfileDialog(false);
@@ -113,7 +122,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
       window.location.reload();
     } catch (error) {
       console.error('Error updating profile:', error);
-      toast({ title: "Error", description: "Failed to update profile", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to update profile. Please try again.", variant: "destructive" });
     } finally {
       setIsUpdating(false);
     }
@@ -188,7 +197,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
       }, 1000);
     } catch (error) {
       console.error('Error redeeming admin code:', error);
-      toast({ title: "Error", description: "Failed to redeem admin code", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to redeem admin code. Please try again.", variant: "destructive" });
     } finally {
       setIsUpdating(false);
     }
@@ -280,7 +289,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
               </Avatar>
               <div>
                 <Label htmlFor="avatar-upload" className="cursor-pointer">
-                  <Button variant="outline" size="sm" asChild>
+                  <Button variant="outline" size="sm" asChild disabled={isUpdating}>
                     <span>
                       <Upload className="mr-2 h-4 w-4" />
                       Upload Photo
@@ -293,6 +302,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                   accept="image/*"
                   onChange={handleAvatarChange}
                   className="hidden"
+                  disabled={isUpdating}
                 />
               </div>
             </div>
@@ -304,6 +314,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter username"
+                disabled={isUpdating}
               />
             </div>
             
@@ -314,6 +325,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
                 placeholder="Tell us about yourself"
+                disabled={isUpdating}
               />
             </div>
 
@@ -337,6 +349,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                     value={adminCode}
                     onChange={(e) => setAdminCode(e.target.value)}
                     placeholder="Enter admin code for admin access"
+                    disabled={isUpdating}
                   />
                   <Button 
                     variant="outline" 
@@ -344,7 +357,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                     disabled={isUpdating || !adminCode.trim()}
                   >
                     <Shield className="mr-1 h-4 w-4" />
-                    Redeem
+                    {isUpdating ? 'Redeeming...' : 'Redeem'}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -354,7 +367,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
             )}
 
             <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setShowProfileDialog(false)}>
+              <Button variant="outline" onClick={() => setShowProfileDialog(false)} disabled={isUpdating}>
                 Cancel
               </Button>
               <Button onClick={handleUpdateProfile} disabled={isUpdating}>
@@ -380,6 +393,7 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Enter new password"
+                disabled={isUpdating}
               />
             </div>
             
@@ -391,11 +405,12 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm new password"
+                disabled={isUpdating}
               />
             </div>
 
             <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setShowPasswordDialog(false)}>
+              <Button variant="outline" onClick={() => setShowPasswordDialog(false)} disabled={isUpdating}>
                 Cancel
               </Button>
               <Button onClick={handleChangePassword} disabled={isUpdating}>

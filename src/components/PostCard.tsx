@@ -5,11 +5,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { Heart, MessageCircle, Repeat2, Share, MoreHorizontal, Info, Flag } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Heart, MessageCircle, Repeat2, Share, MoreHorizontal, Info, Flag, UserPlus, UserMinus, Copy, ExternalLink } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
+import { followsService } from '@/lib/follows';
 
 interface Comment {
   id: string;
@@ -19,6 +21,8 @@ interface Comment {
   content: string;
   like_count: number;
   created_at: string;
+  parent_id?: string;
+  replies?: Comment[];
 }
 
 interface Post {
@@ -52,16 +56,27 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
   const { user } = useAuth();
   const [isLiked, setIsLiked] = useState(post.isLiked || false);
   const [isRetweeted, setIsRetweeted] = useState(post.isRetweeted || false);
+  const [isFollowing, setIsFollowing] = useState(false);
   const [likeCount, setLikeCount] = useState(post.like_count);
   const [retweetCount, setRetweetCount] = useState(post.retweet_count);
   const [commentCount, setCommentCount] = useState(post.comment_count);
   const [showAnimeInfo, setShowAnimeInfo] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyContent, setReplyContent] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [reportReason, setReportReason] = useState('');
+
+  // Check if user is following the post author
+  useState(() => {
+    if (user && user.id !== post.user_id) {
+      followsService.isFollowing(user.id, post.user_id).then(setIsFollowing);
+    }
+  });
 
   const handleLike = async () => {
     if (!user) {
@@ -133,6 +148,24 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
     }
   };
 
+  const handleFollow = async () => {
+    if (!user || user.id === post.user_id) return;
+
+    try {
+      if (isFollowing) {
+        await followsService.unfollowUser(user.id, post.user_id);
+        setIsFollowing(false);
+        toast({ title: "Success", description: `Unfollowed ${post.username}` });
+      } else {
+        await followsService.followUser(user.id, post.user_id);
+        setIsFollowing(true);
+        toast({ title: "Success", description: `Now following ${post.username}` });
+      }
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to update follow status", variant: "destructive" });
+    }
+  };
+
   const loadComments = async () => {
     try {
       const { data, error } = await supabase
@@ -142,7 +175,30 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setComments(data || []);
+      
+      // Group comments by parent_id to create threaded structure
+      const commentsMap = new Map<string, Comment>();
+      const rootComments: Comment[] = [];
+      
+      (data || []).forEach(comment => {
+        const commentWithReplies = { ...comment, replies: [] };
+        commentsMap.set(comment.id, commentWithReplies);
+        
+        if (!comment.parent_id) {
+          rootComments.push(commentWithReplies);
+        }
+      });
+      
+      // Add replies to their parent comments
+      (data || []).forEach(comment => {
+        if (comment.parent_id && commentsMap.has(comment.parent_id)) {
+          const parentComment = commentsMap.get(comment.parent_id)!;
+          const childComment = commentsMap.get(comment.id)!;
+          parentComment.replies!.push(childComment);
+        }
+      });
+      
+      setComments(rootComments);
     } catch (error) {
       console.error('Error loading comments:', error);
     }
@@ -182,6 +238,37 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
     }
   };
 
+  const handleSubmitReply = async (parentId: string) => {
+    if (!user || !replyContent.trim()) return;
+
+    setIsSubmittingComment(true);
+    try {
+      const { error } = await supabase
+        .from('comments')
+        .insert({
+          post_id: post.id,
+          parent_id: parentId,
+          user_id: user.id,
+          username: user.profile?.username || 'Anonymous',
+          user_avatar: user.profile?.avatar_url || '',
+          content: replyContent.trim()
+        });
+
+      if (error) throw error;
+
+      setReplyContent('');
+      setReplyingTo(null);
+      setCommentCount(prev => prev + 1);
+      loadComments();
+      onUpdate?.();
+      toast({ title: "Success", description: "Reply posted!" });
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to post reply", variant: "destructive" });
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
   const handleReport = async () => {
     if (!user || !reportReason.trim()) {
       toast({ title: "Error", description: "Please provide a reason for reporting", variant: "destructive" });
@@ -207,6 +294,31 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
     }
   };
 
+  const handleShare = (platform?: string) => {
+    const postUrl = `${window.location.origin}/post/${post.id}`;
+    const shareText = `Check out this post by ${post.username}: ${post.content.substring(0, 100)}...`;
+
+    if (platform === 'copy') {
+      navigator.clipboard.writeText(postUrl);
+      toast({ title: "Success", description: "Link copied to clipboard!" });
+    } else if (platform === 'whatsapp') {
+      window.open(`https://wa.me/?text=${encodeURIComponent(shareText + ' ' + postUrl)}`, '_blank');
+    } else if (platform === 'facebook') {
+      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(postUrl)}`, '_blank');
+    } else if (platform === 'twitter') {
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(postUrl)}`, '_blank');
+    } else if (navigator.share) {
+      navigator.share({
+        title: `Post by ${post.username}`,
+        text: shareText,
+        url: postUrl
+      });
+    } else {
+      navigator.clipboard.writeText(postUrl);
+      toast({ title: "Success", description: "Link copied to clipboard!" });
+    }
+  };
+
   const extractYouTubeId = (url: string) => {
     const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
     return match ? match[1] : null;
@@ -214,6 +326,77 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
 
   const isYouTubeLink = post.link_url && post.link_url.includes('youtube');
   const youtubeId = isYouTubeLink ? extractYouTubeId(post.link_url!) : null;
+
+  const CommentComponent = ({ comment, isReply = false }: { comment: Comment; isReply?: boolean }) => (
+    <div className={`${isReply ? 'ml-8 border-l-2 border-border pl-4' : ''}`}>
+      <div className="flex space-x-3 mb-3">
+        <Avatar className="h-8 w-8">
+          <AvatarImage src={comment.user_avatar} />
+          <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+            {comment.username[0]?.toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1">
+          <div className="flex items-center space-x-2 mb-1">
+            <span className="font-medium text-sm">{comment.username}</span>
+            <span className="text-muted-foreground text-xs">
+              {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
+            </span>
+          </div>
+          <p className="text-sm mb-2">{comment.content}</p>
+          <div className="flex items-center space-x-2">
+            <Button variant="ghost" size="sm" className="text-xs h-6 px-2">
+              <Heart className="h-3 w-3 mr-1" />
+              {comment.like_count}
+            </Button>
+            {!isReply && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="text-xs h-6 px-2"
+                onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}
+              >
+                Reply
+              </Button>
+            )}
+          </div>
+          
+          {/* Reply input */}
+          {replyingTo === comment.id && (
+            <div className="mt-2 space-y-2">
+              <Textarea
+                placeholder="Write a reply..."
+                value={replyContent}
+                onChange={(e) => setReplyContent(e.target.value)}
+                className="min-h-[60px] text-sm"
+              />
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" size="sm" onClick={() => setReplyingTo(null)}>
+                  Cancel
+                </Button>
+                <Button 
+                  size="sm"
+                  onClick={() => handleSubmitReply(comment.id)}
+                  disabled={!replyContent.trim() || isSubmittingComment}
+                >
+                  {isSubmittingComment ? 'Posting...' : 'Reply'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Render replies */}
+      {comment.replies && comment.replies.length > 0 && (
+        <div className="space-y-3">
+          {comment.replies.map((reply) => (
+            <CommentComponent key={reply.id} comment={reply} isReply={true} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <Card className="p-4 border-border bg-card hover:bg-accent/5 transition-colors">
@@ -241,6 +424,27 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
                   {post.anime_title}
                   <Info className="ml-1 h-3 w-3" />
                 </Badge>
+              )}
+              {/* Follow button */}
+              {user && user.id !== post.user_id && (
+                <Button
+                  variant={isFollowing ? "outline" : "default"}
+                  size="sm"
+                  onClick={handleFollow}
+                  className="h-6 px-2 text-xs"
+                >
+                  {isFollowing ? (
+                    <>
+                      <UserMinus className="h-3 w-3 mr-1" />
+                      Unfollow
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="h-3 w-3 mr-1" />
+                      Follow
+                    </>
+                  )}
+                </Button>
               )}
             </div>
             
@@ -411,23 +615,7 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
                       <p className="text-muted-foreground text-center py-4">No comments yet.</p>
                     ) : (
                       comments.map((comment) => (
-                        <div key={comment.id} className="flex space-x-3">
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src={comment.user_avatar} />
-                            <AvatarFallback className="bg-primary text-primary-foreground text-sm">
-                              {comment.username[0]?.toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <span className="font-medium text-sm">{comment.username}</span>
-                              <span className="text-muted-foreground text-xs">
-                                {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
-                              </span>
-                            </div>
-                            <p className="text-sm">{comment.content}</p>
-                          </div>
-                        </div>
+                        <CommentComponent key={comment.id} comment={comment} />
                       ))
                     )}
                   </div>
@@ -447,25 +635,77 @@ export const PostCard = ({ post, onUpdate }: PostCardProps) => {
               <span>{retweetCount}</span>
             </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              className="hover:bg-blue-500/10 hover:text-blue-500 text-muted-foreground"
-              onClick={() => {
-                if (navigator.share) {
-                  navigator.share({
-                    title: `Post by ${post.username}`,
-                    text: post.content,
-                    url: window.location.href
-                  });
-                } else {
-                  navigator.clipboard.writeText(window.location.href);
-                  toast({ title: "Success", description: "Link copied to clipboard!" });
-                }
-              }}
-            >
-              <Share className="h-4 w-4" />
-            </Button>
+            {/* Enhanced Share Dialog */}
+            <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="hover:bg-blue-500/10 hover:text-blue-500 text-muted-foreground"
+                >
+                  <Share className="h-4 w-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Share Post</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2 p-2 border border-border rounded-lg">
+                    <Input 
+                      value={`${window.location.origin}/post/${post.id}`}
+                      readOnly
+                      className="flex-1"
+                    />
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => handleShare('copy')}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => handleShare('whatsapp')}
+                      className="flex items-center space-x-2"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      <span>WhatsApp</span>
+                    </Button>
+                    
+                    <Button 
+                      variant="outline" 
+                      onClick={() => handleShare('facebook')}
+                      className="flex items-center space-x-2"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      <span>Facebook</span>
+                    </Button>
+                    
+                    <Button 
+                      variant="outline" 
+                      onClick={() => handleShare('twitter')}
+                      className="flex items-center space-x-2"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      <span>Twitter</span>
+                    </Button>
+                    
+                    <Button 
+                      variant="outline" 
+                      onClick={() => handleShare()}
+                      className="flex items-center space-x-2"
+                    >
+                      <Share className="h-4 w-4" />
+                      <span>More</span>
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </div>

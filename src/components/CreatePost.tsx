@@ -127,6 +127,12 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
 
     setIsSubmitting(true);
     try {
+      // Set user context for RLS
+      await supabase.rpc('set_config', { 
+        setting_name: 'app.current_user_id', 
+        setting_value: user.id 
+      });
+
       let mediaUrl = null;
       let postType = 'text';
 
@@ -161,7 +167,10 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
         .from('posts')
         .insert(postData);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Post creation error:', error);
+        throw error;
+      }
 
       // Reset form
       setContent('');
@@ -178,7 +187,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
       onPostCreated?.();
     } catch (error) {
       console.error('Error creating post:', error);
-      toast({ title: "Error", description: "Failed to create post", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to create post. Please try again.", variant: "destructive" });
     } finally {
       setIsSubmitting(false);
     }
@@ -209,6 +218,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
             onChange={(e) => setContent(e.target.value)}
             className="min-h-[120px] resize-none border-0 bg-transparent text-lg placeholder:text-muted-foreground focus-visible:ring-0"
             maxLength={280}
+            disabled={isSubmitting}
           />
 
           {/* Selected anime */}
@@ -226,7 +236,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
                     <p className="text-sm text-muted-foreground">Anime tag</p>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={removeAnime}>
+                <Button variant="ghost" size="sm" onClick={removeAnime} disabled={isSubmitting}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -242,6 +252,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
                 size="sm"
                 className="absolute top-2 right-2"
                 onClick={removeMedia}
+                disabled={isSubmitting}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -256,7 +267,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
                   <p className="text-primary">{linkTitle || 'Link'}</p>
                   <p className="text-sm text-muted-foreground truncate">{linkUrl}</p>
                 </div>
-                <Button variant="ghost" size="sm" onClick={removeLink}>
+                <Button variant="ghost" size="sm" onClick={removeLink} disabled={isSubmitting}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -271,6 +282,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
                 className="text-primary hover:bg-primary/10"
+                disabled={isSubmitting}
               >
                 <Image className="h-5 w-5" />
               </Button>
@@ -280,12 +292,13 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
                 accept="image/*"
                 onChange={handleFileChange}
                 className="hidden"
+                disabled={isSubmitting}
               />
 
               {/* Link input dialog */}
               <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>
                 <DialogTrigger asChild>
-                  <Button variant="ghost" size="sm" className="text-primary hover:bg-primary/10">
+                  <Button variant="ghost" size="sm" className="text-primary hover:bg-primary/10" disabled={isSubmitting}>
                     <Link2 className="h-5 w-5" />
                   </Button>
                 </DialogTrigger>
@@ -323,7 +336,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
               {/* Anime search dialog */}
               <Dialog open={showAnimeDialog} onOpenChange={setShowAnimeDialog}>
                 <DialogTrigger asChild>
-                  <Button variant="ghost" size="sm" className="text-purple-400 hover:bg-purple-400/10">
+                  <Button variant="ghost" size="sm" className="text-purple-400 hover:bg-purple-400/10" disabled={isSubmitting}>
                     <Search className="h-5 w-5" />
                   </Button>
                 </DialogTrigger>
@@ -380,7 +393,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
               {/* Emoji picker */}
               <Dialog>
                 <DialogTrigger asChild>
-                  <Button variant="ghost" size="sm" className="text-yellow-400 hover:bg-yellow-400/10">
+                  <Button variant="ghost" size="sm" className="text-yellow-400 hover:bg-yellow-400/10" disabled={isSubmitting}>
                     <Smile className="h-5 w-5" />
                   </Button>
                 </DialogTrigger>
@@ -415,7 +428,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
                 className="bg-primary hover:bg-primary/90"
               >
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Post
+                {isSubmitting ? 'Posting...' : 'Post'}
               </Button>
             </div>
           </div>
