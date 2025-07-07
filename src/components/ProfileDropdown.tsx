@@ -84,12 +84,6 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
 
     setIsUpdating(true);
     try {
-      // Set user context for RLS
-      await supabase.rpc('set_config', { 
-        setting_name: 'app.current_user_id', 
-        setting_value: user.id 
-      });
-
       let avatarUrl = user.profile?.avatar_url;
 
       if (avatarFile) {
@@ -99,19 +93,23 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
         }
       }
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('user_profiles')
         .update({
           username: username.trim(),
           bio: bio.trim(),
           avatar_url: avatarUrl
         })
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .select()
+        .single();
 
       if (error) {
         console.error('Profile update error:', error);
-        throw error;
+        throw new Error(error.message || 'Failed to update profile');
       }
+
+      console.log('Profile updated successfully:', data);
 
       toast({ title: "Success", description: "Profile updated successfully!" });
       setShowProfileDialog(false);
@@ -119,10 +117,16 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
       setAvatarPreview(null);
       
       // Refresh the page to update the UI
-      window.location.reload();
-    } catch (error) {
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    } catch (error: any) {
       console.error('Error updating profile:', error);
-      toast({ title: "Error", description: "Failed to update profile. Please try again.", variant: "destructive" });
+      toast({ 
+        title: "Error", 
+        description: error.message || "Failed to update profile. Please try again.", 
+        variant: "destructive" 
+      });
     } finally {
       setIsUpdating(false);
     }
@@ -134,13 +138,14 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
       return;
     }
 
+    if (!user) {
+      toast({ title: "Error", description: "User not found", variant: "destructive" });
+      return;
+    }
+
     setIsUpdating(true);
     try {
-      // First, set the user context for RLS
-      await supabase.rpc('set_config', { 
-        setting_name: 'app.current_user_id', 
-        setting_value: user?.id || '' 
-      });
+      console.log('Redeeming admin code:', adminCode.trim());
 
       // Check if the admin code exists and is not used
       const { data: adminKey, error: checkError } = await supabase
@@ -152,14 +157,14 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
 
       if (checkError) {
         console.error('Error checking admin key:', checkError);
-        toast({ title: "Error", description: "Failed to validate admin code", variant: "destructive" });
-        return;
+        throw new Error('Failed to validate admin code');
       }
 
       if (!adminKey) {
-        toast({ title: "Error", description: "Invalid or already used admin code", variant: "destructive" });
-        return;
+        throw new Error('Invalid or already used admin code');
       }
+
+      console.log('Admin key found:', adminKey);
 
       // Mark the admin key as used
       const { error: updateKeyError } = await supabase
@@ -167,25 +172,29 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
         .update({
           is_used: true,
           used_at: new Date().toISOString(),
-          used_by: user?.id
+          used_by: user.id
         })
         .eq('id', adminKey.id);
 
       if (updateKeyError) {
         console.error('Error updating admin key:', updateKeyError);
-        throw updateKeyError;
+        throw new Error('Failed to update admin key');
       }
 
       // Update user profile to admin
-      const { error: updateProfileError } = await supabase
+      const { data: updatedProfile, error: updateProfileError } = await supabase
         .from('user_profiles')
         .update({ is_admin: true })
-        .eq('user_id', user?.id);
+        .eq('user_id', user.id)
+        .select()
+        .single();
 
       if (updateProfileError) {
         console.error('Error updating user profile:', updateProfileError);
-        throw updateProfileError;
+        throw new Error('Failed to grant admin access');
       }
+
+      console.log('Admin access granted:', updatedProfile);
 
       toast({ title: "Success", description: "Admin access granted successfully!" });
       setAdminCode('');
@@ -195,9 +204,13 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
       setTimeout(() => {
         window.location.reload();
       }, 1000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error redeeming admin code:', error);
-      toast({ title: "Error", description: "Failed to redeem admin code. Please try again.", variant: "destructive" });
+      toast({ 
+        title: "Error", 
+        description: error.message || "Failed to redeem admin code. Please try again.", 
+        variant: "destructive" 
+      });
     } finally {
       setIsUpdating(false);
     }
@@ -227,9 +240,13 @@ export const ProfileDropdown = ({ onSignOut }: ProfileDropdownProps) => {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating password:', error);
-      toast({ title: "Error", description: "Failed to update password", variant: "destructive" });
+      toast({ 
+        title: "Error", 
+        description: error.message || "Failed to update password", 
+        variant: "destructive" 
+      });
     } finally {
       setIsUpdating(false);
     }

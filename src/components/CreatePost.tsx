@@ -126,13 +126,8 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
     }
 
     setIsSubmitting(true);
+    
     try {
-      // Set user context for RLS
-      await supabase.rpc('set_config', { 
-        setting_name: 'app.current_user_id', 
-        setting_value: user.id 
-      });
-
       let mediaUrl = null;
       let postType = 'text';
 
@@ -147,7 +142,7 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
         postType = 'link';
       }
 
-      // Create post
+      // Create post data
       const postData = {
         user_id: user.id,
         username: user.profile?.username || 'Anonymous',
@@ -163,14 +158,20 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
         status: 'pending' as 'pending'
       };
 
-      const { error } = await supabase
+      console.log('Creating post with data:', postData);
+
+      const { data, error } = await supabase
         .from('posts')
-        .insert(postData);
+        .insert(postData)
+        .select()
+        .single();
 
       if (error) {
         console.error('Post creation error:', error);
-        throw error;
+        throw new Error(error.message || 'Failed to create post');
       }
+
+      console.log('Post created successfully:', data);
 
       // Reset form
       setContent('');
@@ -183,11 +184,19 @@ export const CreatePost = ({ onPostCreated }: CreatePostProps) => {
         fileInputRef.current.value = '';
       }
 
-      toast({ title: "Success", description: "Post submitted for review!" });
+      toast({ 
+        title: "Success", 
+        description: "Post submitted for review! It will appear once approved." 
+      });
+      
       onPostCreated?.();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating post:', error);
-      toast({ title: "Error", description: "Failed to create post. Please try again.", variant: "destructive" });
+      toast({ 
+        title: "Error", 
+        description: error.message || "Failed to create post. Please try again.", 
+        variant: "destructive" 
+      });
     } finally {
       setIsSubmitting(false);
     }
