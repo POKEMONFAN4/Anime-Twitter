@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
 import { PostCard } from '@/components/PostCard';
 import { CreatePost } from '@/components/CreatePost';
 import { Button } from '@/components/ui/button';
@@ -11,34 +10,14 @@ import { Bell, Search, Settings, Users, TrendingUp, Clock, Heart, Loader2 } from
 import { toast } from '@/hooks/use-toast';
 import { Link, useNavigate } from 'react-router-dom';
 import { ProfileDropdown } from '@/components/ProfileDropdown';
-
-interface Post {
-  id: string;
-  user_id: string;
-  username: string;
-  user_avatar?: string;
-  content: string;
-  post_type: string;
-  media_url?: string;
-  link_url?: string;
-  link_title?: string;
-  anime_id?: string;
-  anime_title?: string;
-  anime_image?: string;
-  like_count: number;
-  retweet_count: number;
-  comment_count: number;
-  created_at: string;
-  original_post_id?: string;
-  isLiked?: boolean;
-  isRetweeted?: boolean;
-}
+import { postsService, PostWithEngagement } from '@/lib/posts';
+import { supabase } from '@/integrations/supabase/client';
 
 const Index = () => {
   const { user, loading, signOut, isAdmin } = useAuth();
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<PostWithEngagement[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredPosts, setFilteredPosts] = useState<Post[]>([]);
+  const [filteredPosts, setFilteredPosts] = useState<PostWithEngagement[]>([]);
   const [activeTab, setActiveTab] = useState('recent');
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -61,12 +40,7 @@ const Index = () => {
 
   useEffect(() => {
     if (searchQuery.trim()) {
-      const filtered = posts.filter(post => 
-        post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        post.anime_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        post.username.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setFilteredPosts(filtered);
+      handleSearch();
     } else {
       setFilteredPosts(posts);
     }
@@ -77,60 +51,46 @@ const Index = () => {
     
     setIsLoadingPosts(true);
     try {
-      let query = supabase
-        .from('posts')
-        .select('*')
-        .eq('status', 'approved')
-        .limit(50);
+      let postsData: PostWithEngagement[] = [];
 
-      // Apply sorting based on active tab
+      // Set user context for RLS
+      await supabase.rpc('set_config', { 
+        setting_name: 'app.current_user_id', 
+        setting_value: user.id 
+      });
+
       switch (activeTab) {
         case 'trending':
-          query = query.order('like_count', { ascending: false });
+          postsData = await postsService.getTrendingPosts(50);
           break;
         case 'following':
-          // For now, show all posts. In a real app, you'd filter by followed users
-          query = query.order('created_at', { ascending: false });
+          postsData = await postsService.getFollowingPosts(user.id, 50);
           break;
         default:
-          query = query.order('created_at', { ascending: false });
+          postsData = await postsService.getRecentPosts(50);
       }
 
-      const { data: postsData, error } = await query;
-
-      if (error) {
-        console.error('Error fetching posts:', error);
-        return;
-      }
-
-      if (postsData) {
-        // Check which posts are liked/retweeted by current user
-        const postIds = postsData.map(p => p.id);
-        
-        if (postIds.length > 0) {
-          const [likesData, retweetsData] = await Promise.all([
-            supabase.from('likes').select('post_id').eq('user_id', user.id).in('post_id', postIds),
-            supabase.from('retweets').select('post_id').eq('user_id', user.id).in('post_id', postIds)
-          ]);
-
-          const likedPosts = new Set(likesData.data?.map(l => l.post_id) || []);
-          const retweetedPosts = new Set(retweetsData.data?.map(r => r.post_id) || []);
-
-          const enhancedPosts = postsData.map(post => ({
-            ...post,
-            isLiked: likedPosts.has(post.id),
-            isRetweeted: retweetedPosts.has(post.id)
-          }));
-
-          setPosts(enhancedPosts);
-        } else {
-          setPosts(postsData);
-        }
-      }
+      // Add user engagement data
+      const postsWithEngagement = await postsService.getPostsWithUserEngagement(postsData, user.id);
+      setPosts(postsWithEngagement);
     } catch (error) {
       console.error('Error fetching posts:', error);
+      toast({ title: "Error", description: "Failed to load posts", variant: "destructive" });
     } finally {
       setIsLoadingPosts(false);
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!user || !searchQuery.trim()) return;
+
+    try {
+      const searchResults = await postsService.searchPosts(searchQuery.trim());
+      const resultsWithEngagement = await postsService.getPostsWithUserEngagement(searchResults, user.id);
+      setFilteredPosts(resultsWithEngagement);
+    } catch (error) {
+      console.error('Error searching posts:', error);
+      toast({ title: "Error", description: "Search failed", variant: "destructive" });
     }
   };
 
@@ -342,7 +302,9 @@ const Index = () => {
             ) : filteredPosts.length === 0 ? (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">
-                  {searchQuery ? 'No posts found matching your search.' : 'No posts yet. Be the first to post!'}
+                  {searchQuery ? 'No posts found matching your search.' : 
+                   activeTab === 'following' ? 'Follow some users to see their posts here!' :
+                   'No posts yet. Be the first to post!'}
                 </p>
               </div>
             ) : (
